@@ -3590,7 +3590,6 @@ static ncclResult_t ncclCommInitRankFunc(struct ncclAsyncJob* job_) {
     } else if (comm->nNodes == 1 && comm->nRanks == 8) {
       NCCLCHECKGOTO(ncclDdaIpcCommInit(comm), res, fail);
     }
-    // Opt-in (RCCL_SDMA_LEND_ENABLE=1) and collective; a no-op otherwise.
     NCCLCHECKGOTO(rcclSdmaLendCommInit(comm), res, fail);
   }
   // update communicator state
@@ -4669,8 +4668,6 @@ static ncclResult_t commDestroySync(struct ncclAsyncJob* job_) {
     // any rank's exported allocations. Revoked comms close in commReclaim.
     ncclResult_t ddaCloseRet = ncclSuccess;
     NCCLCHECKIGNORE(ncclDdaIpcCommClosePeerMappings(comm), ddaCloseRet);
-    // Same reason: this rank's queues and its mappings of the peer's inboxes go
-    // before any rank frees an inbox.
     NCCLCHECKIGNORE(rcclSdmaLendCommClosePeerMappings(comm), ddaCloseRet);
     if (COMPILER_ATOMIC_LOAD(comm->abortFlag, std::memory_order_acquire) == 0) {
       int* hostRanks;

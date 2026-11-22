@@ -718,9 +718,7 @@ if(BUILD_TESTS)
   add_test(NAME rccl-UnitTestsGinSdmaPolicy COMMAND rccl-UnitTestsGinSdmaPolicy)
   set_tests_properties(rccl-UnitTestsGinSdmaPolicy PROPERTIES LABELS "unit")
 
-  # SDMA mesh-lending AllReduce: path split, flag layout, size band and engine
-  # choice (algorithms/sdma_lend/sdma_lend_policy.h). Pure host C++, no GPU, no
-  # librccl. Runs under `ctest -L unit`.
+  # SDMA mesh-lending AllReduce: path split and engine choice. Host only.
   add_executable(rccl-UnitTestsSdmaLendPolicy sdma_lend/sdma_lend_policy_test.cpp)
   set_source_files_properties(sdma_lend/sdma_lend_policy_test.cpp PROPERTIES LANGUAGE CXX)
   target_include_directories(rccl-UnitTestsSdmaLendPolicy PRIVATE ${PROJECT_SOURCE_DIR}/src)

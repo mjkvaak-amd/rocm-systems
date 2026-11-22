@@ -98,7 +98,7 @@ typedef enum {
   // resolves to a Tensor Data Mover kernel. Live dispatch always tags RCCL_SYMMETRIC.
   RCCL_SYMMETRIC_TDM,
   RCCL_AG_GIN_SDMA,     // AllGather via GIN LSA/SDMA
-  RCCL_SDMA_LEND,       // AllReduce over SDMA engines of the ranks and of idle GPUs (two ranks)
+  RCCL_SDMA_LEND,       // AllReduce via SDMA engines of the two ranks and of the GPUs outside the comm
   RCCL_ALGO_COUNT
 } rcclAddonAlgos_t;
 

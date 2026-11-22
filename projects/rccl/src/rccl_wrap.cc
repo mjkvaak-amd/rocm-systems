@@ -2003,13 +2003,11 @@ ncclResult_t rcclSelectAllReduce(struct ncclComm* comm, const void* sendbuff, vo
          (int)comm->ceColl.graphModeSeen, (int)rcclCeArGraphSafe(comm));
   const size_t msgBytes = count * ncclTypeSize(datatype);
   if (!rcclNcclAlgoEnvIsSet()) {
-    // SDMA mesh lending: opt-in (RCCL_SDMA_LEND_ENABLE=1), two ranks, plain buffers.
-    // The host posts the copies after a stream synchronize, so it cannot be captured,
-    // and it bypasses enqueue, so check-mode, suspended and revoked comms do not take it.
-    if (ncclGroupDepth == 0 && !ceCapturing && comm->sdmaLend != nullptr && !rcclCollectiveMustUseEnqueuePath(comm) &&
-        rcclAllReduceSdmaLendEligible(comm, sendbuff, recvbuff, count, datatype, op)) {
+    // SDMA mesh lending (RCCL_SDMA_LEND_ENABLE=1). The host posts the copies after a stream
+    // synchronize, so it is not captured, and it bypasses enqueue.
+    if (ncclGroupDepth == 0 && !ceCapturing && !rcclCollectiveMustUseEnqueuePath(comm) &&
+        rcclAllReduceSdmaLendEligible(comm, count, datatype, op)) {
       decision->algo = RCCL_SDMA_LEND;
-      decision->nMaxChannels = rcclAllReduceSdmaLendBlocks(count, datatype);
       return rcclSelectDone("AR", query, decision);
     }
   #if defined(ENABLE_ROCSHMEM_GIN)

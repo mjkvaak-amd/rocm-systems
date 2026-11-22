@@ -7,30 +7,21 @@
 #ifndef RCCL_SDMA_LEND_KFD_QUEUE_H_
 #define RCCL_SDMA_LEND_KFD_QUEUE_H_
 
-// Private SDMA queues, created with KFD ioctls inside a process whose GPU VMs
-// ROCr already owns, and written from the host.
-//
-// ROCr exposes one copy at a time through hsa_amd_memory_async_copy_on_engine
-// at about 40 us of host time per copy. A queue of our own takes a packet in
-// about 1.5 us and lets several engines of several GPUs run at once.
+// Private SDMA queues on any GPU of the process, written from the host.
 //
 // KFD keeps one process object per mm, so a second /dev/kfd fd reaches the
-// process ROCr set up. AMDKFD_IOC_CREATE_QUEUE then only needs a ring and
-// read/write pointer pages that are GPU-VM mappings of exactly their size:
-// host pages registered as userptr BOs at GPU VA == CPU VA. The doorbell is in
-// the per-GPU doorbell frame ROCr mapped with its first queue on that GPU.
+// process ROCr set up. A queue then needs a ring and read/write pointer pages
+// registered as userptr BOs at GPU VA == CPU VA, and the doorbell frame ROCr
+// mapped with its first queue on that GPU.
 //
-// Needs KFD ioctl 1.17 (queue type SDMA_BY_ENG_ID). Host-written doorbells
-// reach the engine on bare metal; in an SR-IOV guest they can take
-// milliseconds.
+// Needs KFD ioctl 1.17 (queue type SDMA_BY_ENG_ID). A host-written doorbell
+// is prompt on bare metal; in an SR-IOV guest it can take milliseconds.
 //
-// Queue creation follows Nico Holmberg's kfdq.hpp. The same code is in
-// ROCm/aiter#8444 (csrc/include/kfd_sdma_queue.h).
+// Queue creation follows Nico Holmberg's kfdq.hpp.
 
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
@@ -38,12 +29,11 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
-#include <vector>
 
 namespace rccl_sdma_lend {
 
-// uapi/linux/kfd_ioctl.h, spelled out because the header an image ships can
-// predate 1.17 and lack sdma_engine_id.
+// uapi/linux/kfd_ioctl.h, spelled out: an installed header can predate 1.17
+// and lack sdma_engine_id.
 struct GetVersionArgs {
   uint32_t major_version, minor_version;
 };
@@ -83,7 +73,7 @@ constexpr uint32_t kMemCoherent = 1u << 26;
 constexpr uint32_t kMemExecutable = 1u << 30;
 constexpr uint32_t kMemWritable = 1u << 31;
 
-constexpr uint32_t kIoLinkXgmi = 11; // HSA_IOLINKTYPE_XGMI in the sysfs io_links
+constexpr uint32_t kIoLinkXgmi = 11; // HSA_IOLINKTYPE_XGMI
 
 // SDMA packets. COPY_LINEAR: header, count - 1, parameters, source, destination.
 // FENCE: header, address, value.
@@ -91,42 +81,25 @@ constexpr uint32_t kOpCopy = 1;
 constexpr uint32_t kOpFence = 5;
 constexpr size_t kMaxCopyBytes = size_t(1) << 29; // the count field holds 30 bits
 constexpr uint32_t kRingBytes = 256 * 1024;
-constexpr size_t kCopyPacketSize = 7 * sizeof(uint32_t);
-
-struct GpuNode {
-  int node;             // KFD topology node
-  uint32_t gpu_id;      // 0 if this process may not open it
-  uint32_t domain;      // PCI domain
-  uint32_t location_id; // PCI bus/device/function
-};
+constexpr uint64_t kPage = 4096;
 
 inline std::string node_dir(int node) {
   return "/sys/class/kfd/kfd/topology/nodes/" + std::to_string(node);
 }
 
-/// GPUs of the KFD topology that this process may open, in node order.
-inline std::vector<GpuNode> gpu_nodes() {
-  std::vector<GpuNode> out;
-  for (int n = 0; n < 256; ++n) {
-    std::ifstream g(node_dir(n) + "/gpu_id");
-    if (!g.is_open()) break;
+/// The topology node of a GPU, below `limit`; -1 if there is none.
+inline int node_of(uint32_t gpu_id, int limit) {
+  for (int n = 0; n < limit; ++n) {
+    std::ifstream f(node_dir(n) + "/gpu_id");
     uint32_t id = 0;
-    g >> id;
-    if (!id) continue; // a CPU node, or a GPU outside this process's device cgroup
-    std::ifstream props(node_dir(n) + "/properties");
-    std::string key, value;
-    long long loc = -1, domain = -1;
-    while (props >> key >> value) {
-      if (key == "location_id") loc = strtoll(value.c_str(), nullptr, 0);
-      if (key == "domain") domain = strtoll(value.c_str(), nullptr, 0);
-    }
-    if (loc >= 0 && domain >= 0) out.push_back({n, id, static_cast<uint32_t>(domain), static_cast<uint32_t>(loc)});
+    if (!f.is_open()) break;
+    if (f >> id && id == gpu_id) return n;
   }
-  return out;
+  return -1;
 }
 
 struct Link {
-  uint32_t type = 0; // 0: no direct link
+  uint32_t type = 0;        // 0: no direct link
   uint32_t engine_mask = 0; // recommended_sdma_engine_id_mask
 };
 
@@ -147,12 +120,6 @@ inline Link link_between(int node_from, int node_to) {
   return {};
 }
 
-struct Device {
-  int kfd_fd = -1;
-  uint32_t gpu_id = 0;
-  uint64_t doorbell_base = 0, doorbell_size = 0;
-};
-
 /// ROCr's doorbell frame for gpu_id: the /dev/kfd mapping whose file offset is
 /// KFD_MMAP_TYPE_DOORBELL (3 << 62) | gpu_id << 46. It exists once the process
 /// has any queue on that GPU.
@@ -160,10 +127,10 @@ inline bool find_doorbell_frame(uint32_t gpu_id, uint64_t* base, uint64_t* size)
   std::ifstream maps("/proc/self/maps");
   std::string line;
   while (std::getline(maps, line)) {
-    if (line.find("kfd") == std::string::npos) continue;
     unsigned long lo = 0, hi = 0, off = 0;
     char perms[8] = {};
-    if (sscanf(line.c_str(), "%lx-%lx %7s %lx", &lo, &hi, perms, &off) != 4) continue;
+    if (line.find("kfd") == std::string::npos || sscanf(line.c_str(), "%lx-%lx %7s %lx", &lo, &hi, perms, &off) != 4)
+      continue;
     if ((off >> 62) == 3 && ((off >> 46) & 0xFFFF) == (gpu_id & 0xFFFF)) {
       *base = lo;
       *size = hi - lo;
@@ -173,122 +140,101 @@ inline bool find_doorbell_frame(uint32_t gpu_id, uint64_t* base, uint64_t* size)
   return false;
 }
 
-/// Opens KFD for a GPU whose doorbell frame is mapped. Returns "" or the reason.
-inline std::string open_device(uint32_t gpu_id, Device* d) {
-  d->gpu_id = gpu_id;
-  if (!find_doorbell_frame(gpu_id, &d->doorbell_base, &d->doorbell_size))
-    return "no doorbell frame for gpu_id " + std::to_string(gpu_id);
-  if (d->doorbell_size & (d->doorbell_size - 1)) return "doorbell frame size is not a power of two";
-  d->kfd_fd = open("/dev/kfd", O_RDWR | O_CLOEXEC);
-  if (d->kfd_fd < 0) return std::string("open /dev/kfd: ") + strerror(errno);
+/// A /dev/kfd fd of this process in *fd. Returns "" or the reason.
+inline std::string open_kfd(int* fd) {
+  *fd = open("/dev/kfd", O_RDWR | O_CLOEXEC);
+  if (*fd < 0) return std::string("open /dev/kfd: ") + strerror(errno);
   GetVersionArgs v{};
-  if (ioctl(d->kfd_fd, kIocGetVersion, &v) || v.major_version != 1 || v.minor_version < 17) {
-    close(d->kfd_fd);
-    d->kfd_fd = -1;
+  if (ioctl(*fd, kIocGetVersion, &v) || v.major_version != 1 || v.minor_version < 17)
     return "KFD ioctl " + std::to_string(v.major_version) + "." + std::to_string(v.minor_version) +
            " < 1.17: no SDMA_BY_ENG_ID queues";
-  }
   return "";
 }
 
-inline void close_device(Device* d) {
-  if (d->kfd_fd >= 0) close(d->kfd_fd);
-  d->kfd_fd = -1;
-}
-
-/// Zeroed, locked host pages registered on the GPU at their own address.
+/// Zeroed, locked host pages registered on a GPU at their own address.
 struct HostBuffer {
   char* ptr = nullptr;
-  uint64_t size = 0;
-  uint64_t handle = 0;
+  uint64_t size = 0, handle = 0;
 };
 
-inline bool alloc_host_buffer(Device& d, uint64_t size, uint32_t extra_flags, HostBuffer* b) {
-    // A fresh anonymous mapping: heap pages can sit in a range ROCr once
-    // registered as a userptr, which KFD then refuses with EADDRINUSE.
-  void* r = mmap(nullptr, 2 * size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (r == MAP_FAILED) return false;
-  const uint64_t lo = reinterpret_cast<uint64_t>(r), va = (lo + size - 1) & ~(size - 1);
-  if (va > lo) munmap(r, va - lo);
-  if (lo + 2 * size > va + size) munmap(reinterpret_cast<void*>(va + size), lo + 2 * size - (va + size));
-  memset(reinterpret_cast<void*>(va), 0, size);
-  mlock(reinterpret_cast<void*>(va), size);
-  AllocArgs a{va, size, 0, va, d.gpu_id, kMemUserptr | kMemWritable | kMemCoherent | kMemUncached | extra_flags};
-  if (ioctl(d.kfd_fd, kIocAlloc, &a)) {
-    munmap(reinterpret_cast<void*>(va), size);
-    return false;
-  }
-  uint32_t ids[1] = {d.gpu_id};
-  MapArgs m{a.handle, reinterpret_cast<uint64_t>(ids), 1, 0};
-  if (ioctl(d.kfd_fd, kIocMap, &m) || m.n_success != 1) {
-    FreeArgs f{a.handle};
-    ioctl(d.kfd_fd, kIocFree, &f);
-    munmap(reinterpret_cast<void*>(va), size);
-    return false;
-  }
-  b->ptr = reinterpret_cast<char*>(va);
-  b->size = size;
-  b->handle = a.handle;
-  return true;
-}
-
-inline void free_host_buffer(Device& d, HostBuffer* b) {
+inline void free_host_buffer(int fd, uint32_t gpu_id, HostBuffer* b) {
   if (!b->ptr) return;
-  uint32_t ids[1] = {d.gpu_id};
-  MapArgs m{b->handle, reinterpret_cast<uint64_t>(ids), 1, 0};
-  ioctl(d.kfd_fd, kIocUnmap, &m);
+  MapArgs m{b->handle, reinterpret_cast<uint64_t>(&gpu_id), 1, 0};
+  ioctl(fd, kIocUnmap, &m);
   FreeArgs f{b->handle};
-  ioctl(d.kfd_fd, kIocFree, &f);
+  ioctl(fd, kIocFree, &f);
   munmap(b->ptr, b->size);
   b->ptr = nullptr;
 }
 
+inline bool alloc_host_buffer(int fd, uint32_t gpu_id, uint64_t size, uint32_t extra_flags, HostBuffer* b) {
+  // A fresh anonymous mapping, aligned to its size: heap pages can sit in a
+  // range ROCr once registered as a userptr, which KFD refuses with EADDRINUSE.
+  void* r = mmap(nullptr, 2 * size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (r == MAP_FAILED) return false;
+  const uint64_t lo = reinterpret_cast<uint64_t>(r), va = (lo + size - 1) & ~(size - 1);
+  if (va > lo) munmap(r, va - lo);
+  if (va < lo + size) munmap(reinterpret_cast<void*>(va + size), lo + size - va);
+  mlock(reinterpret_cast<void*>(va), size); // fresh anonymous pages read as zero
+  AllocArgs a{va, size, 0, va, gpu_id, kMemUserptr | kMemWritable | kMemCoherent | kMemUncached | extra_flags};
+  if (ioctl(fd, kIocAlloc, &a)) {
+    munmap(reinterpret_cast<void*>(va), size);
+    return false;
+  }
+  *b = {reinterpret_cast<char*>(va), size, a.handle};
+  MapArgs m{a.handle, reinterpret_cast<uint64_t>(&gpu_id), 1, 0};
+  if (ioctl(fd, kIocMap, &m) == 0 && m.n_success == 1) return true;
+  free_host_buffer(fd, gpu_id, b);
+  return false;
+}
+
 struct Queue {
-  Device* dev = nullptr;
-  uint32_t queue_id = 0;
-  uint32_t engine = 0;
+  int fd = -1;
+  uint32_t gpu_id = 0, queue_id = 0;
   bool created = false;
-  bool dirty = false; // packets written since the last doorbell
   HostBuffer ring, rptr, wptr;
   uint64_t wpos = 0;
   uint64_t* doorbell = nullptr;
 };
 
-/// One SDMA queue on `engine` of the device. Returns "" or the reason.
-inline std::string create_queue(Device& d, uint32_t engine, Queue* q) {
-  q->dev = &d;
-  q->engine = engine;
-  if (!alloc_host_buffer(d, kRingBytes, kMemExecutable, &q->ring) || !alloc_host_buffer(d, 4096, 0, &q->rptr) ||
-      !alloc_host_buffer(d, 4096, 0, &q->wptr))
-    return std::string("queue buffers: ") + strerror(errno);
+/// One SDMA queue on `engine` of a GPU whose doorbell frame is mapped.
+/// Returns "" or the reason.
+inline std::string create_queue(int fd, uint32_t gpu_id, uint32_t engine, Queue* q) {
+  const std::string where = " on gpu_id " + std::to_string(gpu_id);
+  uint64_t bell_base = 0, bell_size = 0;
+  if (!find_doorbell_frame(gpu_id, &bell_base, &bell_size) || (bell_size & (bell_size - 1)))
+    return "no doorbell frame" + where;
+  q->fd = fd;
+  q->gpu_id = gpu_id;
+  if (!alloc_host_buffer(fd, gpu_id, kRingBytes, kMemExecutable, &q->ring) ||
+      !alloc_host_buffer(fd, gpu_id, kPage, 0, &q->rptr) || !alloc_host_buffer(fd, gpu_id, kPage, 0, &q->wptr))
+    return "queue buffers" + where + ": " + strerror(errno);
   CreateQueueArgs a{};
   a.ring_base_address = reinterpret_cast<uint64_t>(q->ring.ptr);
   a.ring_size = kRingBytes;
   a.read_pointer_address = reinterpret_cast<uint64_t>(q->rptr.ptr);
   a.write_pointer_address = reinterpret_cast<uint64_t>(q->wptr.ptr);
-  a.gpu_id = d.gpu_id;
+  a.gpu_id = gpu_id;
   a.queue_type = kQueueTypeSdmaByEngId;
   a.queue_percentage = 100;
   a.queue_priority = 15;
   a.sdma_engine_id = engine;
-  if (ioctl(d.kfd_fd, kIocCreateQueue, &a))
-    return "AMDKFD_IOC_CREATE_QUEUE on gpu_id " + std::to_string(d.gpu_id) + " engine " + std::to_string(engine) +
-           ": " + strerror(errno);
+  if (ioctl(fd, kIocCreateQueue, &a))
+    return "AMDKFD_IOC_CREATE_QUEUE" + where + " engine " + std::to_string(engine) + ": " + strerror(errno);
   q->queue_id = a.queue_id;
   q->created = true;
-  q->doorbell = reinterpret_cast<uint64_t*>(d.doorbell_base + (a.doorbell_offset & (d.doorbell_size - 1)));
+  q->doorbell = reinterpret_cast<uint64_t*>(bell_base + (a.doorbell_offset & (bell_size - 1)));
   return "";
 }
 
+/// Idempotent.
 inline void destroy_queue(Queue* q) {
   if (q->created) {
     DestroyQueueArgs a{q->queue_id, 0};
-    ioctl(q->dev->kfd_fd, kIocDestroyQueue, &a);
+    ioctl(q->fd, kIocDestroyQueue, &a);
     q->created = false;
   }
-  free_host_buffer(*q->dev, &q->ring);
-  free_host_buffer(*q->dev, &q->rptr);
-  free_host_buffer(*q->dev, &q->wptr);
+  for (HostBuffer* b : {&q->ring, &q->rptr, &q->wptr}) free_host_buffer(q->fd, q->gpu_id, b);
 }
 
 inline void put(Queue& q, const uint32_t* words, size_t n) {
@@ -301,7 +247,6 @@ inline void put(Queue& q, const uint32_t* words, size_t n) {
   }
   memcpy(q.ring.ptr + pos, words, bytes);
   q.wpos += bytes;
-  q.dirty = true;
 }
 
 inline void put_copy(Queue& q, const void* src, void* dst, size_t bytes) {
@@ -330,10 +275,8 @@ inline void put_fence(Queue& q, void* addr, uint32_t value) {
 }
 
 inline void ring_doorbell(Queue& q) {
-  if (!q.dirty) return;
   __atomic_store_n(reinterpret_cast<uint64_t*>(q.wptr.ptr), q.wpos, __ATOMIC_SEQ_CST);
   __atomic_store_n(q.doorbell, q.wpos, __ATOMIC_SEQ_CST);
-  q.dirty = false;
 }
 
 } // namespace rccl_sdma_lend

@@ -839,10 +839,8 @@ ncclResult_t ncclAllReduce_impl(const void* sendbuff, void* recvbuff, size_t cou
     });
 #endif
   case RCCL_SDMA_LEND:
-    INFO(NCCL_COLL, "AllReduce: taking SDMA lend path: paths=%d count=%zu bytes=%zu", rcclSdmaLendNumPaths(comm),
-         count, count * ncclTypeSize(datatype));
     return rcclAddonLaunch(info, [&] {
-      return rcclAllReduceSdmaLend(sendbuff, recvbuff, count, datatype, op, comm, stream);
+      return rcclAllReduceSdmaLend(sendbuff, recvbuff, count, datatype, comm, stream);
     });
   case RCCL_CE_2SHOT: {
     if (count == 0) return ncclSuccess;

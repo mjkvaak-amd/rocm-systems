@@ -79,7 +79,6 @@ ncclResult_t ncclDdaIpcCommClosePeerMappings(struct ncclComm* comm) {
 }
 ncclResult_t ncclDdaIpcCommFini(struct ncclComm* comm) { return ncclSuccess; }
 ncclResult_t ncclDdaIpcCommInit(struct ncclComm* comm) { ::abort(); }
-// SDMA mesh lending is opt-in and off in every host test: init.cc reaches these as no-ops.
 ncclResult_t rcclSdmaLendCommInit(struct ncclComm* comm) { return ncclSuccess; }
 ncclResult_t rcclSdmaLendCommClosePeerMappings(struct ncclComm* comm) { return ncclSuccess; }
 ncclResult_t rcclSdmaLendCommFini(struct ncclComm* comm) { return ncclSuccess; }

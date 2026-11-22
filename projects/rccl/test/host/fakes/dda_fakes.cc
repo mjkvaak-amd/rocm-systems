@@ -165,13 +165,8 @@ DEFINE_DDA_ROOT_LAUNCH(broadcastDdaFabricLL128, ncclBroadcastDdaFabricLL128)
 #undef DEFINE_DDA_ALLGATHER_ELIGIBLE
 #undef DEFINE_DDA_REDUCTION_ELIGIBLE
 
-// SDMA mesh lending (src/algorithms/sdma_lend). The selector tests leave comm->sdmaLend null, so
-// rcclSelectAllReduce never asks; these only resolve the references of rccl_wrap.cc and collectives.cc.
-bool rcclAllReduceSdmaLendEligible(ncclComm*, const void*, void*, size_t, ncclDataType_t, ncclRedOp_t) {
-  return false;
-}
-uint32_t rcclAllReduceSdmaLendBlocks(size_t, ncclDataType_t) { return 0; }
-int rcclSdmaLendNumPaths(ncclComm*) { return 0; }
-ncclResult_t rcclAllReduceSdmaLend(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm*, hipStream_t) {
+// SDMA mesh lending is opt-in and off in every host test.
+bool rcclAllReduceSdmaLendEligible(ncclComm*, size_t, ncclDataType_t, ncclRedOp_t) { return false; }
+ncclResult_t rcclAllReduceSdmaLend(const void*, void*, size_t, ncclDataType_t, ncclComm*, hipStream_t) {
   FailLoud("dda_fakes", "rcclAllReduceSdmaLend: no fake launch is wired");
 }

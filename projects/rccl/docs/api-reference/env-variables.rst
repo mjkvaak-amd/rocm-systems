@@ -595,15 +595,12 @@ collected in the following table.
     * - | ``RCCL_SDMA_LEND_ENABLE``
         | Opts in to the SDMA mesh-lending AllReduce. On a single-node two-rank
           communicator on gfx942 or gfx950 whose GPUs share a direct xGMI link,
-          a sum of ``float32``, ``float16`` or ``bfloat16`` moves each rank's
-          input to the peer through SDMA engines of the rank's own GPU and of
-          the GPUs outside the communicator (the lenders); one kernel per rank
-          then adds. User buffers need no registration. The call synchronizes
-          the caller's stream before it posts the copies, and it is not used
-          inside a group call or while a graph is captured. Without a lender
-          the path stays off.
+          a sum of ``float32``, ``float16`` or ``bfloat16`` moves through SDMA
+          engines of the two ranks and of the GPUs outside the communicator
+          (the lenders). The call synchronizes the caller's stream. It is not
+          used inside a group call or under graph capture.
       - | ``0``: Disabled (default).
-        | ``1``: Enabled, subject to the eligibility checks above.
+        | ``1``: Enabled.
 
     * - | ``RCCL_SDMA_LEND_MIN_BYTES``
         | Smallest message that takes the SDMA mesh-lending AllReduce.
@@ -612,22 +609,18 @@ collected in the following table.
 
     * - | ``RCCL_SDMA_LEND_MAX_BYTES``
         | Largest message that takes the SDMA mesh-lending AllReduce. Each rank
-          allocates two device buffers of this size when the path is enabled.
+          allocates two device buffers of this size.
       - | Bytes.
         | Default: ``268435456`` (256 MiB).
 
-    * - | ``RCCL_SDMA_LEND_LENDERS``
-        | GPUs whose SDMA engines a two-rank communicator may borrow for the
-          SDMA mesh-lending AllReduce. A lender needs an xGMI link to both
-          ranks and must be visible to ROCr in both processes
-          (``ROCR_VISIBLE_DEVICES`` hides a GPU from ROCr,
-          ``HIP_VISIBLE_DEVICES`` does not).
-      - | ``auto``: Every GPU that qualifies (default).
-        | Comma list of PCI addresses, for example
-          ``0000:e5:00.0,0000:f5:00.0``: Only these GPUs.
-        | ``none``: No lender; keeps the path on over the direct link alone
-          when set on both ranks. Slower than the default AllReduce, for
-          measurements only.
+    * - | ``RCCL_SDMA_LEND_MAX_LENDERS``
+        | Most GPUs a communicator borrows SDMA engines from. A lender needs
+          an xGMI link to both ranks and must be visible to ROCr in both
+          processes (``ROCR_VISIBLE_DEVICES`` hides a GPU from ROCr,
+          ``HIP_VISIBLE_DEVICES`` does not). Without a lender the path is off.
+      - | ``N`` >= 1: Up to ``N`` lenders. Default: ``7``.
+        | ``0``: The direct link alone. Slower than the default AllReduce;
+          for measurements.
 
 Network and topology
 ====================

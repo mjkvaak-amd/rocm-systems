@@ -24,6 +24,7 @@
 #include "algorithms/dda/broadcast/dda_broadcast.h"
 #include "algorithms/gin/gin_alltoall.h"
 #include "algorithms/gin/gin_all_reduce.h"
+#include "algorithms/sdma_lend/sdma_lend_all_reduce.h"
 #include "sym_kernels.h"
 #include "dev_runtime.h"
 #include "ce_coll.h"
@@ -837,6 +838,12 @@ ncclResult_t ncclAllReduce_impl(const void* sendbuff, void* recvbuff, size_t cou
       return ncclAllReduceGinSdma(sendbuff, recvbuff, count, datatype, op, comm, stream);
     });
 #endif
+  case RCCL_SDMA_LEND:
+    INFO(NCCL_COLL, "AllReduce: taking SDMA lend path: paths=%d count=%zu bytes=%zu", rcclSdmaLendNumPaths(comm),
+         count, count * ncclTypeSize(datatype));
+    return rcclAddonLaunch(info, [&] {
+      return rcclAllReduceSdmaLend(sendbuff, recvbuff, count, datatype, op, comm, stream);
+    });
   case RCCL_CE_2SHOT: {
     if (count == 0) return ncclSuccess;
     INFO(NCCL_COLL, "CE 2-shot AllReduce: count=%zu datatype=%d op=%d rank=%d/%d", count, (int)datatype, (int)op,

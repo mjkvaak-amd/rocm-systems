@@ -42,6 +42,7 @@ THE SOFTWARE.
 #include "algorithms/gin/gin_all_gather.h"
 #include "algorithms/gin/gin_all_reduce.h"
 #endif
+#include "algorithms/sdma_lend/sdma_lend_all_reduce.h"
 #include "algorithms/dda/alltoall/dda_alltoall.h"
 #include "algorithms/dda/broadcast/dda_broadcast.h"
 #include "algorithms/gin/gin_alltoall.h"
@@ -1026,6 +1027,9 @@ ncclResult_t rcclGetAlgoName(int algo, const char** algoName) {
     case rcclAddonAlgos_t::RCCL_GIN_SDMA:
       *algoName = "GIN-SDMA";
       break;
+    case rcclAddonAlgos_t::RCCL_SDMA_LEND:
+      *algoName = "SDMA-Lend";
+      break;
     case rcclAddonAlgos_t::RCCL_A2A_PIVOT:
       *algoName = "A2A-Pivot";
       break;
@@ -1999,6 +2003,15 @@ ncclResult_t rcclSelectAllReduce(struct ncclComm* comm, const void* sendbuff, vo
          (int)comm->ceColl.graphModeSeen, (int)rcclCeArGraphSafe(comm));
   const size_t msgBytes = count * ncclTypeSize(datatype);
   if (!rcclNcclAlgoEnvIsSet()) {
+    // SDMA mesh lending: opt-in (RCCL_SDMA_LEND_ENABLE=1), two ranks, plain buffers.
+    // The host posts the copies after a stream synchronize, so it cannot be captured,
+    // and it bypasses enqueue, so check-mode, suspended and revoked comms do not take it.
+    if (ncclGroupDepth == 0 && !ceCapturing && comm->sdmaLend != nullptr && !rcclCollectiveMustUseEnqueuePath(comm) &&
+        rcclAllReduceSdmaLendEligible(comm, sendbuff, recvbuff, count, datatype, op)) {
+      decision->algo = RCCL_SDMA_LEND;
+      decision->nMaxChannels = rcclAllReduceSdmaLendBlocks(count, datatype);
+      return rcclSelectDone("AR", query, decision);
+    }
   #if defined(ENABLE_ROCSHMEM_GIN)
     // GIN-SDMA scaleup AllReduce. Same gates as the previous early return in
     // ncclAllReduce_impl (group depth 0 + eligibility). Graph-capture-safe: init

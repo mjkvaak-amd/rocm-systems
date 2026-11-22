@@ -47,6 +47,10 @@ set(SRC_FILES
   algorithms/dda/reduce_scatter/dda_reduce_scatter_fabric_ll.cu
   algorithms/dda/reduce_scatter/dda_reduce_scatter_fabric_ll128.cu
   algorithms/dda/reduce_scatter/dda_reduce_scatter_ipc.cu
+  algorithms/sdma_lend/kfd_sdma_queue.h
+  algorithms/sdma_lend/sdma_lend_all_reduce.cu
+  algorithms/sdma_lend/sdma_lend_all_reduce.h
+  algorithms/sdma_lend/sdma_lend_policy.h
   debug.cc
   dev_runtime.cc
   dev_runtime_internal.h
@@ -1062,6 +1066,8 @@ if(ENABLE_DEVICE_LINKER)
   list(FILTER HIP_SOURCES EXCLUDE REGEX "dda_reduce_scatter_ipc\\.cu\\.cpp$")
   list(FILTER HIP_SOURCES EXCLUDE REGEX "dda_all_gather_ipc\\.cu\\.cpp$")
   list(FILTER HIP_SOURCES EXCLUDE REGEX "dda_alltoall_ipc\\.cu\\.cpp$")
+  # Holds the SDMA mesh-lending reduce kernel and its launch site.
+  list(FILTER HIP_SOURCES EXCLUDE REGEX "sdma_lend_all_reduce\\.cu\\.cpp$")
   list(FILTER HIP_SOURCES EXCLUDE REGEX "gin_all_gather_sdma\\.cu\\.cpp$")
   # Contains the GIN-SDMA alltoall __global__ kernel and its launch site, so it
   # needs full HIP compilation rather than --offload-host-only.

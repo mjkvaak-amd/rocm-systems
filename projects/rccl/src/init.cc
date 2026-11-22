@@ -86,6 +86,7 @@
 #include "algorithms/dda/all_reduce/dda_all_reduce.h"
 #include "algorithms/dda/ipc/ipc_init.h"
 #include "algorithms/dda/fabric/fabric_init.h"
+#include "algorithms/sdma_lend/sdma_lend_all_reduce.h"
 #if defined(__x86_64__) || defined(_M_X64)
 #include <cpuid.h>
 #endif
@@ -634,6 +635,7 @@ static ncclResult_t commFree(ncclComm_t comm) {
   } else {
     NCCLCHECK(ncclDdaIpcCommFini(comm));
   }
+  NCCLCHECK(rcclSdmaLendCommFini(comm));
 
   if (comm->bootstrap) NCCLCHECK(bootstrapClose(comm->bootstrap));
 
@@ -3588,6 +3590,8 @@ static ncclResult_t ncclCommInitRankFunc(struct ncclAsyncJob* job_) {
     } else if (comm->nNodes == 1 && comm->nRanks == 8) {
       NCCLCHECKGOTO(ncclDdaIpcCommInit(comm), res, fail);
     }
+    // Opt-in (RCCL_SDMA_LEND_ENABLE=1) and collective; a no-op otherwise.
+    NCCLCHECKGOTO(rcclSdmaLendCommInit(comm), res, fail);
   }
   // update communicator state
   COMPILER_ATOMIC_STORE(&comm->initState, ncclSuccess, std::memory_order_release);
@@ -4665,6 +4669,9 @@ static ncclResult_t commDestroySync(struct ncclAsyncJob* job_) {
     // any rank's exported allocations. Revoked comms close in commReclaim.
     ncclResult_t ddaCloseRet = ncclSuccess;
     NCCLCHECKIGNORE(ncclDdaIpcCommClosePeerMappings(comm), ddaCloseRet);
+    // Same reason: this rank's queues and its mappings of the peer's inboxes go
+    // before any rank frees an inbox.
+    NCCLCHECKIGNORE(rcclSdmaLendCommClosePeerMappings(comm), ddaCloseRet);
     if (COMPILER_ATOMIC_LOAD(comm->abortFlag, std::memory_order_acquire) == 0) {
       int* hostRanks;
       int hostRank = 0;
@@ -4892,6 +4899,7 @@ static ncclResult_t commReclaim(struct ncclAsyncJob* job_) {
           // exported allocations.
           ncclResult_t ddaCloseRet = ncclSuccess;
           NCCLCHECKIGNORE(ncclDdaIpcCommClosePeerMappings(curIntraComm), ddaCloseRet);
+          NCCLCHECKIGNORE(rcclSdmaLendCommClosePeerMappings(curIntraComm), ddaCloseRet);
         }
       }
       for (int i = 0; i < nIntraThreads; i++) {

@@ -1107,6 +1107,8 @@ struct ncclComm {
   struct ncclGinAllGatherState ginAllGatherState; // GIN-SDMA allgather state (private devComm)
   struct ncclGinA2AState ginA2AState; // GIN-SDMA alltoall state (private devComm)
   struct ncclGinAllReduceState ginAllReduceState; // GIN-SDMA AllReduce state (private devComm)
+  // SDMA mesh-lending AllReduce (RCCL_SDMA_LEND_ENABLE=1). Null unless every rank set the path up.
+  struct rcclSdmaLendState* sdmaLend;
 
   struct ncclMemManager* memManager; // Memory manager
   struct ncclIntruQueue<struct ncclMemManagerTask, &ncclMemManagerTask::next> suspendTaskQueue;

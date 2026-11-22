@@ -593,34 +593,19 @@ collected in the following table.
         | ``N`` > 0: Request a team of ``N`` ranks.
 
     * - | ``RCCL_SDMA_LEND_ENABLE``
-        | Opts in to the SDMA mesh-lending AllReduce. On a single-node two-rank
-          communicator on gfx942 or gfx950 whose GPUs share a direct xGMI link,
-          a sum of ``float32``, ``float16`` or ``bfloat16`` moves through SDMA
-          engines of the two ranks and of the GPUs outside the communicator
-          (the lenders). The call synchronizes the caller's stream. It is not
-          used inside a group call or under graph capture.
+        | Opts in to the SDMA mesh-lending AllReduce for single-node two-rank
+          gfx950 communicators whose GPUs share a direct xGMI link. A sum of
+          ``float32``, ``float16`` or ``bfloat16`` of 4 MiB to 256 MiB, in
+          multiples of 16 bytes, also moves through SDMA engines of the GPUs
+          outside the communicator (the lenders). A lender needs an xGMI link
+          to both ranks and must be visible to ROCr in both processes
+          (``ROCR_VISIBLE_DEVICES`` hides a GPU from ROCr,
+          ``HIP_VISIBLE_DEVICES`` does not); without one the path is off. The
+          call synchronizes the caller's stream and is not used inside a group
+          call or under graph capture. ``sendbuff`` must be device memory.
+          Each rank allocates 512 MiB of device memory.
       - | ``0``: Disabled (default).
         | ``1``: Enabled.
-
-    * - | ``RCCL_SDMA_LEND_MIN_BYTES``
-        | Smallest message that takes the SDMA mesh-lending AllReduce.
-      - | Bytes.
-        | Default: ``4194304`` (4 MiB).
-
-    * - | ``RCCL_SDMA_LEND_MAX_BYTES``
-        | Largest message that takes the SDMA mesh-lending AllReduce. Each rank
-          allocates two device buffers of this size.
-      - | Bytes.
-        | Default: ``268435456`` (256 MiB).
-
-    * - | ``RCCL_SDMA_LEND_MAX_LENDERS``
-        | Most GPUs a communicator borrows SDMA engines from. A lender needs
-          an xGMI link to both ranks and must be visible to ROCr in both
-          processes (``ROCR_VISIBLE_DEVICES`` hides a GPU from ROCr,
-          ``HIP_VISIBLE_DEVICES`` does not). Without a lender the path is off.
-      - | ``N`` >= 1: Up to ``N`` lenders. Default: ``7``.
-        | ``0``: The direct link alone. Slower than the default AllReduce;
-          for measurements.
 
 Network and topology
 ====================

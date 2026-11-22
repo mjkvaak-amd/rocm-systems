@@ -4668,7 +4668,6 @@ static ncclResult_t commDestroySync(struct ncclAsyncJob* job_) {
     // any rank's exported allocations. Revoked comms close in commReclaim.
     ncclResult_t ddaCloseRet = ncclSuccess;
     NCCLCHECKIGNORE(ncclDdaIpcCommClosePeerMappings(comm), ddaCloseRet);
-    NCCLCHECKIGNORE(rcclSdmaLendCommClosePeerMappings(comm), ddaCloseRet);
     if (COMPILER_ATOMIC_LOAD(comm->abortFlag, std::memory_order_acquire) == 0) {
       int* hostRanks;
       int hostRank = 0;
@@ -4896,7 +4895,6 @@ static ncclResult_t commReclaim(struct ncclAsyncJob* job_) {
           // exported allocations.
           ncclResult_t ddaCloseRet = ncclSuccess;
           NCCLCHECKIGNORE(ncclDdaIpcCommClosePeerMappings(curIntraComm), ddaCloseRet);
-          NCCLCHECKIGNORE(rcclSdmaLendCommClosePeerMappings(curIntraComm), ddaCloseRet);
         }
       }
       for (int i = 0; i < nIntraThreads; i++) {

@@ -17,11 +17,9 @@
 
 struct ncclComm;
 
-// Collective at comm init. Never fails the comm: a rank that cannot set the
-// path up turns it off for both.
+// Collective at comm init. A rank that cannot set the path up turns it off for
+// both; only a bootstrap error fails the comm.
 ncclResult_t rcclSdmaLendCommInit(struct ncclComm* comm);
-// Destroys this rank's queues and unmaps the peer's inboxes. Idempotent.
-ncclResult_t rcclSdmaLendCommClosePeerMappings(struct ncclComm* comm);
 ncclResult_t rcclSdmaLendCommFini(struct ncclComm* comm);
 
 bool rcclAllReduceSdmaLendEligible(struct ncclComm* comm, size_t count, ncclDataType_t datatype, ncclRedOp_t op);

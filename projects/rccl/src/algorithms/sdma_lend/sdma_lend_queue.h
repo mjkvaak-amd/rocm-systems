@@ -9,7 +9,9 @@
 
 // An SDMA queue on one engine of any GPU of the process, written from the
 // host. Created through hsakmt, as Anvil's queues are; those are written by
-// kernels of the queue's own GPU.
+// kernels of the queue's own GPU and have their ring in device memory. This
+// ring is system memory, as ROCr's host-written SDMA rings are: with a ring
+// in device memory an engine now and then ran what the ring held a lap ago.
 
 #include <hsakmt/hsakmt.h>
 
@@ -62,12 +64,12 @@ inline bool create_queue(uint32_t node, uint32_t engine, Queue* q) {
   flags.ui32.NonPaged = 1;
   flags.ui32.HostAccess = 1;
   flags.ui32.ExecuteAccess = 1;
-  flags.ui32.Uncached = 1;
-  flags.ui32.NoNUMABind = 1;
   void* ring = nullptr;
-  if (!open_hsakmt() || hsaKmtAllocMemory(node, kRingBytes, flags, &ring) != HSAKMT_STATUS_SUCCESS) return false;
+  HSAuint64 gpuVa = 0;
+  // Node 0 is a CPU node, which makes the allocation system memory.
+  if (!open_hsakmt() || hsaKmtAllocMemory(0, kRingBytes, flags, &ring) != HSAKMT_STATUS_SUCCESS) return false;
   q->ring = static_cast<char*>(ring);
-  q->created = hsaKmtMapMemoryToGPU(ring, kRingBytes, nullptr) == HSAKMT_STATUS_SUCCESS &&
+  q->created = hsaKmtMapMemoryToGPUNodes(ring, kRingBytes, &gpuVa, {}, 1, &node) == HSAKMT_STATUS_SUCCESS &&
                hsaKmtCreateQueueExt(node, HSA_QUEUE_SDMA_BY_ENG_ID, 100, HSA_QUEUE_PRIORITY_MAXIMUM, engine, ring,
                                     kRingBytes, nullptr, &q->res) == HSAKMT_STATUS_SUCCESS;
   if (q->created) return true;

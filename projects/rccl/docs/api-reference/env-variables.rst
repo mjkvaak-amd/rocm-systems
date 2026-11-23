@@ -603,7 +603,8 @@ collected in the following table.
           ``HIP_VISIBLE_DEVICES`` does not); without one the path is off. The
           call synchronizes the caller's stream and is not used inside a group
           call or under graph capture. ``sendbuff`` must be device memory.
-          Each rank allocates 512 MiB of device memory.
+          Each rank allocates 512 MiB of device memory. A communicator with any
+          other number of ranks takes the default path.
       - | ``0``: Disabled (default).
         | ``1``: Enabled.
 

@@ -49,6 +49,7 @@ namespace {
 
 namespace sdma = rccl_sdma_lend;
 
+constexpr int kRanks = 2;          // why: see rcclSdmaLendCommInit
 constexpr int kMaxPaths = 8;       // the direct link and up to seven lenders
 constexpr uint32_t kMaxNodes = 64; // KFD topology nodes, as the bits of a mask
 constexpr size_t kMinBytes = 4 << 20;
@@ -289,8 +290,11 @@ void launchReduce(const ReduceArgs& a, size_t bytes, cudaStream_t stream, hipEve
 
 ncclResult_t rcclSdmaLendCommInit(ncclComm* comm) {
   // Rank-uniform gate: both ranks run the two all-gathers below, or neither.
+  // Two ranks only: with four ranks and the other four GPUs lending, the same
+  // transport in AITER gained 2% to 4% per 80 MiB call on a full MI355X node,
+  // and with eight no GPU is left to lend.
   if (rcclParamSdmaLendEnable() == 0) return ncclSuccess;
-  if (comm->nRanks != 2 || comm->nNodes != 1 || comm->MNNVL || !IsArchMatch(comm->archName, "gfx950")) {
+  if (comm->nRanks != kRanks || comm->nNodes != 1 || comm->MNNVL || !IsArchMatch(comm->archName, "gfx950")) {
     INFO(NCCL_INIT, "SDMA lend: not a two-rank single-node gfx950 communicator, off");
     return ncclSuccess;
   }
@@ -300,13 +304,13 @@ ncclResult_t rcclSdmaLendCommInit(ncclComm* comm) {
   // In comm from here on: rcclSdmaLendCommFini frees it, also when init fails.
   rcclSdmaLendState* st = comm->sdmaLend = new rcclSdmaLendState();
   std::string why = "the ranks did not both set it up, with the same number of lenders";
-  Export ex[2] = {};
+  Export ex[kRanks] = {};
   bool ok = localSetup(st, gpu, &ex[comm->rank], &why);
   NCCLCHECK(bootstrapAllGather(comm->bootstrap, ex, sizeof(Export)));
   ok = ok && ex[1 - comm->rank].ok && connectPeer(comm, st, gpu, ex, &why);
 
   // Rank-uniform outcome, else the ranks pick different backends and hang.
-  int paths[2] = {0, 0};
+  int paths[kRanks] = {};
   paths[comm->rank] = ok ? st->nPaths : 0;
   NCCLCHECK(bootstrapAllGather(comm->bootstrap, paths, sizeof(int)));
   if (paths[0] == 0 || paths[0] != paths[1]) {

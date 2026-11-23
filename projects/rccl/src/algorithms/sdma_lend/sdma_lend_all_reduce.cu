@@ -75,12 +75,15 @@ Split makeSplit(size_t bytes, int nPaths) {
   s.bound[nPaths] = bytes;
   return s;
 }
+// No piece is empty, and one fits the 30-bit count of a copy packet.
+static_assert(kMinBytes / kMaxPaths >= kPieceAlign && kMaxBytes <= size_t(1) << 30, "piece size");
 
 // ---- device ------------------------------------------------------------------
 
 // Flags only grow, and a later fence of a queue implies the earlier ones: >=.
-// Relaxed: the engine wrote the piece before the flag, and an acquire load
-// measured 14 us slower per call. False if the communicator aborts first.
+// The load races with the engine's write on purpose. Relaxed: the engine wrote
+// the piece before the flag, and an acquire load measured 14 us slower per
+// call from 16 MiB. False if the communicator aborts first.
 __device__ __forceinline__ bool waitFlag(const int* flag, int epoch, const uint32_t* abort) {
   for (uint32_t spins = 0; __atomic_load_n(flag, __ATOMIC_RELAXED) - epoch < 0;) {
     if ((++spins & 0xffff) == 0 && __atomic_load_n(abort, __ATOMIC_RELAXED)) return false;
@@ -115,11 +118,17 @@ __global__ void sdmaLendReduceKernel(ReduceArgs a) {
   const size_t per = (bytes / kVecBytes + gridDim.x - 1) / gridDim.x * kVecBytes;
   const size_t lo = std::min(blockIdx.x * per, bytes), hi = std::min(lo + per, bytes);
   // A block needs its pieces to have arrived, and to have departed before it
-  // writes over them in place.
-  for (int p = 0; p < a.split.nPaths; ++p) {
-    if (a.split.bound[p + 1] <= lo || a.split.bound[p] >= hi) continue;
-    if (!waitFlag(a.flags + p, a.epoch, a.abort) || !waitFlag(a.flags + kMaxPaths + p, a.epoch, a.abort)) return;
+  // writes over them in place. One thread polls for the block.
+  __shared__ bool ok;
+  if (threadIdx.x == 0) {
+    ok = true;
+    for (int p = 0; p < a.split.nPaths && ok; ++p) {
+      if (a.split.bound[p + 1] > lo && a.split.bound[p] < hi)
+        ok = waitFlag(a.flags + p, a.epoch, a.abort) && waitFlag(a.flags + kMaxPaths + p, a.epoch, a.abort);
+    }
   }
+  __syncthreads();
+  if (!ok) return;
   for (size_t off = lo + threadIdx.x * kVecBytes; off < hi; off += blockDim.x * kVecBytes)
     addVec<T>(a.out + off, a.inp + off, a.inbox + off);
 }
@@ -162,8 +171,8 @@ hsa_status_t addGpu(hsa_agent_t agent, void* byNode) {
   return HSA_STATUS_SUCCESS;
 }
 
-// The SDMA engine of `gpu` that ROCr recommends for copies over its xGMI link
-// to `to`; -1 if there is none.
+// The SDMA engine of `gpu` that ROCr recommends for copies over its link to
+// `to`; -1 if there is none. ROCr recommends one for xGMI links only.
 int engineFor(hsa_agent_t gpu, hsa_agent_t to) {
   uint32_t mask = 0;
   return gpu.handle != 0 && to.handle != 0 &&
@@ -228,7 +237,8 @@ bool connectPeer(ncclComm* comm, rcclSdmaLendState* st, const hsa_agent_t* gpu, 
   const hsa_agent_t self = st->path[0].agent;
   const hsa_agent_t other = peer.node < kMaxNodes ? gpu[peer.node] : hsa_agent_t{};
   if (engineFor(self, other) < 0 || engineFor(other, self) < 0) {
-    *why = "ROCr recommends no SDMA engine for a direct xGMI link between the two ranks";
+    *why = other.handle == 0 ? "ROCr does not see the peer's GPU in this process" :
+                               "ROCr recommends no SDMA engine for a direct xGMI link between the two ranks";
     return false;
   }
 
@@ -310,9 +320,10 @@ ncclResult_t rcclSdmaLendCommInit(ncclComm* comm) {
 ncclResult_t rcclSdmaLendCommFini(ncclComm* comm) {
   rcclSdmaLendState* st = comm->sdmaLend;
   if (st == nullptr) return ncclSuccess;
-  // doneEvent is recorded after every launch and the reduce kernel waits for
-  // every flag: once it has fired, no engine works for this rank and none
-  // writes this rank's block.
+  // doneEvent is recorded after every launch: once it has fired, no kernel
+  // reads the block. After an abort the engines can still be at work:
+  // destroy_queue waits for this rank's, and the peer's write through the
+  // peer's own attachment, which keeps the block's memory until it detaches.
   if (comm->doneEvent != nullptr && cudaEventSynchronize(comm->doneEvent) != cudaSuccess)
     WARN("SDMA lend: doneEvent sync failed; continuing cleanup");
   for (Path& path : st->path) sdma::destroy_queue(&path.queue);

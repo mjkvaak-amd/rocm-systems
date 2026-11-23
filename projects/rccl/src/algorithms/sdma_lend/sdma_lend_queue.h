@@ -42,9 +42,13 @@ inline bool open_hsakmt() {
   return ok;
 }
 
-/// Idempotent.
+/// Waits until the engine has run everything queued. Idempotent.
 inline void destroy_queue(Queue* q) {
-  if (q->created) hsaKmtDestroyQueue(q->res.QueueId);
+  if (q->created) {
+    while (__atomic_load_n(q->res.Queue_read_ptr_aql, __ATOMIC_RELAXED) < q->wpos) {
+    }
+    hsaKmtDestroyQueue(q->res.QueueId);
+  }
   if (q->ring) {
     hsaKmtUnmapMemoryToGPU(q->ring);
     hsaKmtFreeMemory(q->ring, kRingBytes);
@@ -83,7 +87,7 @@ inline void put(Queue& q, const uint32_t* words, size_t n) {
   q.wpos += bytes;
 }
 
-/// bytes <= 2^30: the count field holds 30 bits.
+/// 0 < bytes <= 2^30: the count field holds bytes - 1 in 30 bits.
 inline void put_copy(Queue& q, const void* src, void* dst, size_t bytes) {
   const auto s = reinterpret_cast<uintptr_t>(src), d = reinterpret_cast<uintptr_t>(dst);
   const uint32_t w[7] = {kOpCopy,

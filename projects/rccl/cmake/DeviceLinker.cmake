@@ -766,6 +766,8 @@ foreach(_coll all_reduce reduce_scatter all_gather alltoall)
       ${_dda_dir}/${_coll}/dda_${_coll}_fabric${_proto}.cu.cpp SUPPRESS_WARNINGS)
   endforeach()
 endforeach()
+dl_add_fat_object(sdma_lend_all_reduce
+  ${HIPIFY_DIR}/src/algorithms/sdma_lend/sdma_lend_all_reduce.cu.cpp DEPFILE_TRACKING)
 foreach(_proto _ll _ll128)
   dl_add_fat_object(dda_broadcast_fabric${_proto}
     ${_dda_dir}/broadcast/dda_broadcast_fabric${_proto}.cu.cpp SUPPRESS_WARNINGS)

@@ -47,6 +47,9 @@ set(SRC_FILES
   algorithms/dda/reduce_scatter/dda_reduce_scatter_fabric_ll.cu
   algorithms/dda/reduce_scatter/dda_reduce_scatter_fabric_ll128.cu
   algorithms/dda/reduce_scatter/dda_reduce_scatter_ipc.cu
+  algorithms/sdma_lend/sdma_lend_all_reduce.cu
+  algorithms/sdma_lend/sdma_lend_all_reduce.h
+  algorithms/sdma_lend/sdma_lend_queue.h
   debug.cc
   dev_runtime.cc
   dev_runtime_internal.h
@@ -1062,6 +1065,7 @@ if(ENABLE_DEVICE_LINKER)
   list(FILTER HIP_SOURCES EXCLUDE REGEX "dda_reduce_scatter_ipc\\.cu\\.cpp$")
   list(FILTER HIP_SOURCES EXCLUDE REGEX "dda_all_gather_ipc\\.cu\\.cpp$")
   list(FILTER HIP_SOURCES EXCLUDE REGEX "dda_alltoall_ipc\\.cu\\.cpp$")
+  list(FILTER HIP_SOURCES EXCLUDE REGEX "sdma_lend_all_reduce\\.cu\\.cpp$")
   list(FILTER HIP_SOURCES EXCLUDE REGEX "gin_all_gather_sdma\\.cu\\.cpp$")
   # Contains the GIN-SDMA alltoall __global__ kernel and its launch site, so it
   # needs full HIP compilation rather than --offload-host-only.
@@ -1857,6 +1861,13 @@ elseif(ENABLE_ROCSHMEM_GIN)
   # into librccl.so (SDMA and the GDA factory + mlx5 provider via src/gin).
   # Only real dependency: anvil.cpp calls hsaKmt* directly (see the HSAKMT_LIBRARY
   # detection above) so it must be added to librccl.so.
+  target_link_libraries(rccl PRIVATE ${HSAKMT_LIBRARY})
+else()
+  # The SDMA mesh-lending AllReduce calls hsaKmt* too, so every build links the archive.
+  find_library(HSAKMT_LIBRARY NAMES hsakmt HINTS "${ROCM_PATH}" PATH_SUFFIXES lib lib64)
+  if(NOT HSAKMT_LIBRARY)
+    message(FATAL_ERROR "Could not find libhsakmt")
+  endif()
   target_link_libraries(rccl PRIVATE ${HSAKMT_LIBRARY})
 endif()
 

@@ -86,6 +86,7 @@
 #include "algorithms/dda/all_reduce/dda_all_reduce.h"
 #include "algorithms/dda/ipc/ipc_init.h"
 #include "algorithms/dda/fabric/fabric_init.h"
+#include "algorithms/sdma_lend/sdma_lend_all_reduce.h"
 #if defined(__x86_64__) || defined(_M_X64)
 #include <cpuid.h>
 #endif
@@ -634,6 +635,7 @@ static ncclResult_t commFree(ncclComm_t comm) {
   } else {
     NCCLCHECK(ncclDdaIpcCommFini(comm));
   }
+  NCCLCHECK(rcclSdmaLendCommFini(comm));
 
   if (comm->bootstrap) NCCLCHECK(bootstrapClose(comm->bootstrap));
 
@@ -3588,6 +3590,7 @@ static ncclResult_t ncclCommInitRankFunc(struct ncclAsyncJob* job_) {
     } else if (comm->nNodes == 1 && comm->nRanks == 8) {
       NCCLCHECKGOTO(ncclDdaIpcCommInit(comm), res, fail);
     }
+    NCCLCHECKGOTO(rcclSdmaLendCommInit(comm), res, fail);
   }
   // update communicator state
   COMPILER_ATOMIC_STORE(&comm->initState, ncclSuccess, std::memory_order_release);

@@ -14,6 +14,7 @@
 #include "algorithms/dda/alltoall/dda_alltoall.h"
 #include "algorithms/dda/broadcast/dda_broadcast.h"
 #include "algorithms/dda/reduce_scatter/dda_reduce_scatter.h"
+#include "algorithms/sdma_lend/sdma_lend_all_reduce.h"
 #include "fail_loud.h"
 #include "signature-drift.h"
 
@@ -163,3 +164,9 @@ DEFINE_DDA_ROOT_LAUNCH(broadcastDdaFabricLL128, ncclBroadcastDdaFabricLL128)
 #undef DEFINE_DDA_BLOCKS
 #undef DEFINE_DDA_ALLGATHER_ELIGIBLE
 #undef DEFINE_DDA_REDUCTION_ELIGIBLE
+
+// SDMA mesh lending is opt-in and off in every host test.
+bool rcclAllReduceSdmaLendEligible(ncclComm*, size_t, ncclDataType_t, ncclRedOp_t) { return false; }
+ncclResult_t rcclAllReduceSdmaLend(const void*, void*, size_t, ncclDataType_t, ncclComm*, hipStream_t) {
+  FailLoud("dda_fakes", "rcclAllReduceSdmaLend: no fake launch is wired");
+}
